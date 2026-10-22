@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fuga no Labirinto</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px);background:#0f1220}
+body{margin:0;background:#0f1220;color:#e8eaf6;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px}
+h1{font-size:18px;margin:4px 0 0;letter-spacing:.5px}
+#hud{display:flex;gap:16px;font-size:15px;flex-wrap:wrap;justify-content:center}
+#hud b{color:#5eead4}
+#bar{width:min(100%,520px);height:8px;background:#1b1f36;border-radius:4px;overflow:hidden}
+#fill{height:100%;width:100%;background:#5eead4;transition:background .3s}
+#wrap{position:relative;max-width:100%;overflow-x:auto}
+canvas{display:block;border-radius:8px;background:#161a2e}
+#ov{position:absolute;inset:0;background:rgba(10,12,24,.86);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:16px;border-radius:8px}
+#ov h2{margin:0;font-size:24px}#ov p{margin:0;max-width:320px;line-height:1.4;color:#c5c9e6;font-size:14px}
+button{background:#5eead4;color:#0f1220;border:0;border-radius:8px;padding:10px 22px;font-size:16px;font-weight:700;cursor:pointer}
+#pad{display:none;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(2,56px);gap:6px}
+#pad button{padding:0;background:#27304f;color:#e8eaf6;font-size:22px;touch-action:none}
+@media(pointer:coarse){#pad{display:grid}}
+.leg{font-size:12px;color:#9aa0c4;text-align:center}
+</style></head><body>
+<h1>🏃 FUGA NO LABIRINTO</h1>
+<div id="hud"><span>Fase <b id="hl">1</b>/6</span><span>Tempo <b id="ht">0</b>s</span><span>Tentativas <b id="ha">0</b></span><span>Dash <b id="hd">pronto</b></span></div>
+<div id="bar"><div id="fill"></div></div>
+<div id="wrap"><canvas id="c" width="440" height="380"></canvas>
+<div id="ov"><h2>Fuga no Labirinto</h2><p>Chegue à saída <span style="color:#4ade80">verde</span> antes que o tempo acabe e sem ser pego. Cuidado com as armadilhas <span style="color:#fbbf24">▲</span>: elas paralisam você por 0,7 segundo.</p><p>Setas ou WASD para mover. <b>Espaço</b> = dash de 3 casas na direção atual (recarga de 10s).</p><button id="go">Jogar</button></div></div>
+<div id="pad"><button id="dbtn" style="font-size:12px">DASH</button><button data-d="u">▲</button><span></span><button data-d="l">◀</button><button data-d="d">▼</button><button data-d="r">▶</button></div>
+<div class="leg">🔴 perseguidor (te caça de perto) &nbsp; 🟣 errante (anda ao acaso)</div>
+<script>
+const LV=[
+{c:11,r:9,ch:1,wa:0,sp:420,tr:0,f:3.2,x:6},
+{c:15,r:11,ch:1,wa:1,sp:350,tr:1,f:2.8,x:8},
+{c:19,r:13,ch:2,wa:1,sp:310,tr:1,f:2.5,x:10},
+{c:21,r:15,ch:3,wa:1,sp:280,tr:2,f:2.2,x:12},
+{c:25,r:17,ch:3,wa:2,sp:250,tr:2,f:2.0,x:14},
+{c:27,r:19,ch:4,wa:2,sp:220,tr:3,f:1.8,x:16}];
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const $=id=>document.getElementById(id),ov=$('ov');
+const PL=140,rnd=n=>Math.random()*n|0;
+let S=null,li=0,att=0,keys=[],tdir=null,cell=24,dashReq=false;
+const DIR={u:[0,-1],d:[0,1],l:[-1,0],r:[1,0]};
+function gen(c,r,extra){
+ const g=Array.from({length:r},()=>Array(c).fill(1));g[1][1]=0;const st=[[1,1]];
+ const D=[[2,0],[-2,0],[0,2],[0,-2]];
+ while(st.length){const[x,y]=st[st.length-1];
+  const o=D.filter(([a,b])=>{const nx=x+a,ny=y+b;return nx>0&&ny>0&&nx<c-1&&ny<r-1&&g[ny][nx]});
+  if(!o.length){st.pop();continue}
+  const[a,b]=o[rnd(o.length)];g[y+b/2][x+a/2]=0;g[y+b][x+a]=0;st.push([x+a,y+b]);}
+ for(let t=0,k=0;t<800&&k<extra;t++){const x=1+rnd(c-2),y=1+rnd(r-2);
+  if(g[y][x]&&((!g[y][x-1]&&!g[y][x+1])||(!g[y-1][x]&&!g[y+1][x]))){g[y][x]=0;k++}}
+ return g}
+function bfs(g,sx,sy){
+ const d=g.map(r=>r.map(()=>-1));d[sy][sx]=0;const q=[[sx,sy]];
+ for(let i=0;i<q.length;i++){const[x,y]=q[i];
+  for(const[a,b]of Object.values(DIR)){const nx=x+a,ny=y+b;
+   if(!g[ny][nx]&&d[ny][nx]<0){d[ny][nx]=d[y][x]+1;q.push([nx,ny])}}}
+ return d}
+function nb(g,x,y){return Object.values(DIR).map(([a,b])=>[x+a,y+b]).filter(([a,b])=>!g[b][a])}
+function start(i){
+ li=i;const L=LV[i],g=gen(L.c,L.r,L.x);
+ const gx=L.c-2,gy=L.r-2,d=bfs(g,1,1),path=d[gy][gx];
+ let max=0;d.forEach(r=>r.forEach(v=>max=Math.max(max,v)));
+ const fl=[];g.forEach((r,y)=>r.forEach((v,x)=>{if(!v)fl.push([x,y,d[y][x]])}));
+ fl.sort(()=>Math.random()-.5);
+ const used=new Set(['1,1',gx+','+gy]),en=[];
+ const mk=(type,n)=>{for(let k=0;k<n;k++){const p=fl.find(([x,y,dd])=>dd>=max*.4&&!used.has(x+','+y));
+  used.add(p[0]+','+p[1]);en.push({x:p[0],y:p[1],fx:p[0],fy:p[1],type,next:0,prev:null,sp:type=='ch'?L.sp:L.sp*.75})}};
+ mk('ch',L.ch);mk('wa',L.wa);
+ const traps=[];for(const p of fl){if(traps.length>=L.tr)break;
+  if(p[2]>=4&&!used.has(p[0]+','+p[1])){traps.push(p[0]+','+p[1]);used.add(p[0]+','+p[1])}}
+ const limit=Math.ceil(path*PL/1000*L.f)+4;
+ S={g,L,gx,gy,en,traps:new Set(traps),p:{x:1,y:1,fx:1,fy:1},limit,t0:performance.now(),next:0,stun:0,dashAt:0,last:null,state:'play',dm:null,dk:''};
+ size();ov.style.display='none';$('hl').textContent=i+1;$('ha').textContent=att}
+function size(){if(!S)return;
+ cell=Math.max(10,Math.min(36,Math.floor(Math.min((innerWidth-24)/S.L.c,(innerHeight-300)/S.L.r))));
+ cv.width=S.L.c*cell;cv.height=S.L.r*cell}
+addEventListener('resize',size);
+function show(t,m,b,fn){ov.innerHTML=`<h2>${t}</h2><p>${m}</p><button id="b2">${b}</button>`;ov.style.display='flex';$('b2').onclick=fn}
+$('go').onclick=()=>{att=0;start(0)};
+function lose(msg){if(S.state!='play')return;S.state='over';att++;$('ha').textContent=att;
+ show(msg,'Tente de novo: o labirinto muda a cada tentativa.','Repetir fase',()=>start(li))}
+function win(){S.state='over';
+ if(li==LV.length-1)show('🏆 Você escapou!','Venceu as 6 fases com '+att+' tentativa(s) perdida(s).','Jogar de novo',()=>{att=0;start(0)});
+ else show('✅ Fase '+(li+1)+' concluída!','Sobraram '+Math.max(0,S.left).toFixed(1)+'s. A próxima fase é mais difícil.','Próxima fase',()=>start(li+1))}
+function dir(){const k=keys.length?keys[keys.length-1]:tdir;return k?DIR[k]:null}
+const KM={ArrowUp:'u',w:'u',W:'u',ArrowDown:'d',s:'d',S:'d',ArrowLeft:'l',a:'l',A:'l',ArrowRight:'r',d:'r',D:'r'};
+addEventListener('keydown',e=>{if(e.code=='Space'){e.preventDefault();dashReq=true;return}const k=KM[e.key];if(k){e.preventDefault();if(!keys.includes(k))keys.push(k)}});
+addEventListener('keyup',e=>{const k=KM[e.key];if(k)keys=keys.filter(x=>x!=k)});
+$('dbtn').addEventListener('pointerdown',e=>{e.preventDefault();dashReq=true});
+document.querySelectorAll('#pad button[data-d]').forEach(b=>{
+ b.addEventListener('pointerdown',e=>{e.preventDefault();tdir=b.dataset.d});
+ ['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>{if(tdir==b.dataset.d)tdir=null}))});
+function moveEnemy(e){
+ const{g,p}=S;
+ if(e.type=='ch'){
+  const k=p.x+','+p.y;if(S.dk!=k){S.dm=bfs(g,p.x,p.y);S.dk=k}
+  const d=S.dm[e.y][e.x];
+  if(d<=10+li*2){const o=nb(g,e.x,e.y).sort((a,b)=>S.dm[a[1]][a[0]]-S.dm[b[1]][b[0]]);
+   if(o.length){e.prev={x:e.x,y:e.y};e.x=o[0][0];e.y=o[0][1];return}}}
+ let o=nb(g,e.x,e.y);
+ if(o.length>1&&e.prev)o=o.filter(([a,b])=>!(a==e.prev.x&&b==e.prev.y));
+ const n=o[rnd(o.length)];e.prev={x:e.x,y:e.y};e.x=n[0];e.y=n[1]}
+function update(now){
+ if(!S||S.state!='play')return;
+ const left=S.limit-(now-S.t0)/1000;S.left=left;
+ $('ht').textContent=Math.max(0,left).toFixed(1);
+ const f=$('fill');f.style.width=Math.max(0,left/S.limit*100)+'%';
+ f.style.background=left/S.limit<.25?'#f87171':left/S.limit<.5?'#fbbf24':'#5eead4';
+ if(left<=0)return lose('⏰ Tempo esgotado!');
+ const p=S.p,d=dir();
+ if(dashReq){dashReq=false;
+  if(now>=S.dashAt&&now>=S.stun){const dd=d||S.last;
+   if(dd){let n=0;
+    while(n<3&&!S.g[p.y+dd[1]][p.x+dd[0]]){p.x+=dd[0];p.y+=dd[1];n++;
+     if(S.traps.has(p.x+','+p.y)){S.stun=now+700;break}
+     if(p.x==S.gx&&p.y==S.gy)return win();
+     if(S.en.some(e=>e.x==p.x&&e.y==p.y))return lose('💀 Você foi pego!')}
+    if(n){S.dashAt=now+10000;S.next=now+PL}}}}
+ $('hd').textContent=now>=S.dashAt?'pronto':Math.ceil((S.dashAt-now)/1000)+'s';
+ if(d&&now>=S.stun&&now>=S.next){const nx=p.x+d[0],ny=p.y+d[1];
+  if(!S.g[ny][nx]){p.x=nx;p.y=ny;S.next=now+PL;S.last=d;
+   if(S.traps.has(nx+','+ny)){S.stun=now+700}
+   if(nx==S.gx&&ny==S.gy)return win()}}
+ for(const e of S.en){
+  if(now>=e.next){moveEnemy(e);e.next=now+e.sp}
+  if(e.x==p.x&&e.y==p.y)return lose('💀 Você foi pego!')}}
+function draw(now){
+ if(S){const{g,L,p}=S,W=cell;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  for(let y=0;y<L.r;y++)for(let x=0;x<L.c;x++){
+   ctx.fillStyle=g[y][x]?'#3b4478':((x+y)%2?'#1a1f38':'#161a2e');
+   ctx.fillRect(x*W,y*W,W,W);
+   if(g[y][x]){ctx.fillStyle='#4c579a';ctx.fillRect(x*W,y*W,W,W*.18)}}
+  S.traps.forEach(k=>{const[x,y]=k.split(',').map(Number);
+   ctx.fillStyle='#fbbf24';ctx.beginPath();ctx.moveTo(x*W+W/2,y*W+W*.2);ctx.lineTo(x*W+W*.85,y*W+W*.8);ctx.lineTo(x*W+W*.15,y*W+W*.8);ctx.fill()});
+  const pulse=.5+.5*Math.sin(now/200);
+  ctx.fillStyle='#4ade80';ctx.shadowColor='#4ade80';ctx.shadowBlur=8+8*pulse;
+  ctx.fillRect(S.gx*W+W*.15,S.gy*W+W*.15,W*.7,W*.7);ctx.shadowBlur=0;
+  p.fx+=(p.x-p.fx)*.4;p.fy+=(p.y-p.fy)*.4;
+  const stunned=now<S.stun;
+  ctx.fillStyle=stunned?'#94a3b8':'#5eead4';
+  ctx.beginPath();ctx.arc(p.fx*W+W/2,p.fy*W+W/2,W*.33,0,7);ctx.fill();
+  for(const e of S.en){e.fx+=(e.x-e.fx)*.25;e.fy+=(e.y-e.fy)*.25;
+   const cx=e.fx*W+W/2,cy=e.fy*W+W/2;
+   ctx.fillStyle=e.type=='ch'?'#ef4444':'#a855f7';
+   ctx.beginPath();ctx.arc(cx,cy,W*.4,0,7);ctx.fill();
+   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cx-W*.14,cy-W*.05,W*.1,0,7);ctx.arc(cx+W*.14,cy-W*.05,W*.1,0,7);ctx.fill();
+   ctx.fillStyle='#111';ctx.beginPath();ctx.arc(cx-W*.14,cy-W*.05,W*.045,0,7);ctx.arc(cx+W*.14,cy-W*.05,W*.045,0,7);ctx.fill()}}
+ update(now);requestAnimationFrame(draw)}
+requestAnimationFrame(draw);
+</script></body></html>
